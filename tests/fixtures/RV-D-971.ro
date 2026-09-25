@@ -1,0 +1,161 @@
+id: RV-D-971
+rid: 5b514bef-0302-48cf-95b9-0aade1670375
+model: cimv2
+name: Не было удалено обнаруженное средствами АВЗ ВПО 
+version: 1.0.3
+date: 2025-10-06
+author: Ilya Efimov, Alina Bayramova, R-Vision
+status: stable
+type: correlation_rule
+severity: medium
+
+description: Данное правило срабатывает при обнаружении средствами антивирусной защиты (АВЗ) потенциального вредоносного программного обеспечения (ВПО), которое не было удалено, вылечено или запрещено. Данная активность может свидетельствовать о возможном заражении хоста ВПО.
+
+response:
+  communication:
+  - Уточнить у владельца хоста или учетной записи, ассоциированных с размещением ВПО, время и способ проникновения ВПО, например, через использование съемных носителей, загрузку подозрительных файлов из интернета или вложений.
+  - Узнать, запускалось ли ВПО на узле.
+  - Узнать, было ли удалено ВПО с устройства.
+  - "Выявить наличие аномалий: самопроизвольных действий с файлами, признаков удаленного управления, блокировки системы."
+  analysis:
+  - Определить индикаторы компрометации ВПО, провести их анализ на VirusTotal (KATA) и других платформах.
+  - При наличии семпла ВПО произвести анализ в песочнице Any.run (tria.ge, sandbox и др.) для выявления иных артефактов ВПО.
+  - Провести анализ событий на хосте для выявления других потенциально опасных действий. В первую очередь, необходимо проанализировать список запущенных процессов, чтобы определить, был ли запуск вредоносного ПО.
+  - Определить список потенциально зараженных устройств по выявленным индикаторам компрометации.
+  containment:
+  - Зараженные системы должны быть переведены в изолированную сеть. При признаках целевой атаки вместо физического отключения следует перенастроить маршрутизацию, блокируя взаимодействие с остальной инфраструктурой организации.
+  - Обновить пароли всех учетных записей хоста, использовавшихся в период заражения, включая служебные учетные записи для сканирования уязвимостей, сбора логов, инвентаризации и администрирования.
+  - По возможности ограничить привилегии для потенциально скомпрометированных учетных записей.
+  - При проведении детального анализа необходимо получить или запросить образец ВПО, дампы RAM и диска скомпрометированного компьютера.
+  remediation:
+  - Провести полное антивирусное сканирование зараженных хостов.
+  - Восстановить систему из резервной копии или выполнить полное удаление угрозы и сопутствующих артефактов.
+
+incident_taxonomy:
+  id: RV-MW-1
+  category: Вредоносная активность
+  type: Вирус обнаружен и не удален
+
+reference: 
+  - https://support.kaspersky.com/KESWin/12.3/ru-RU/246282.htm
+  - https://attack.mitre.org/techniques/T1204/002/
+
+tags:
+  - execution
+  - resource_development
+  - attack.T1204.002
+  - attack.T1204
+  - attack.T1588.001
+  - attack.T1588
+
+data_source:
+  - platform: Kaspersky
+    source: Kaspersky Security Center
+    events:
+      - GNRL_EV_VIRUS_FOUND
+      - GNRL_EV_VIRUS_FOUND_BY_KSN
+      - GNRL_EV_OBJECT_NOTCURED
+      - GNRL_EV_OBJECT_REPORTED
+      - EventID_00000139
+      - EventID_000009fc
+
+known_false_positives:
+  - Ложные срабатывания АВЗ
+  - Работа сканеров уязвимостей внутри инфраструктуры
+
+filter: !vrl |
+  .device_vendor == "kaspersky"
+
+aliases:
+  virus_detected:
+    filter: !vrl |
+      # Фильтр по событию обнаружения вируса
+      includes(["gnrl_ev_virus_found", "gnrl_ev_virus_found_by_ksn"], .device_event_id)
+  virus_not_deleted:
+    filter: !vrl |
+      # Фильтр по событию удаления, лечения, запрета вируса
+      includes(["gnrl_ev_object_notcured", "gnrl_ev_object_reported", "00000139", "000009fc"], .device_event_id)
+
+select:
+    alias: virus_detected
+    join:
+      alias: virus_not_deleted
+      on:
+        - eq: {virus_detected: .src_ip, virus_not_deleted: .src_ip}
+        - eq: {virus_detected: .dst_object_hash_sha256, virus_not_deleted: .dst_object_hash_sha256}
+
+on_correlate: !vrl |
+  .mitre_tts = ["TA0002", "T1204", "T1204.002", "T1588", "T1588.001"]
+  # Информация о модели
+  .model_version = "2.0"
+  .correlation_rule_version = "1.0.3"
+  # Категоризация
+  .correlation_rule_type = "detect"
+  .category = "attack"
+  .category_sub = "malware"
+
+  .groupedBy = ["src_hostname"]
+  .src_hostname = %virus_detected.src_hostname
+  .device_product = %virus_detected.device_product
+  .device_vendor = %virus_detected.device_vendor
+  .device_fqdn = %virus_detected.device_fqdn
+  .device_time = %virus_detected.device_time
+  .src_ip = %virus_detected.src_ip
+  .src_user_domain = %virus_detected.src_user_domain
+  .src_user_name = %virus_detected.src_user_name
+  .src_domain = %virus_detected.src_domain
+  .dst_object_path = %virus_detected.dst_object_path
+  .dst_object_hash_md5 = %virus_detected.dst_object_hash_md5
+  .dst_object_hash_sha256 = %virus_detected.dst_object_hash_sha256
+  .device_hostname = %virus_detected.device_hostname
+  .src_hostname = %virus_detected.src_hostname
+  .dst_object_class = %virus_detected.dst_object_class
+
+  if %virus_not_deleted.device_event_id == "gnrl_ev_object_notcured"{
+    .description, _err = "На хосте " + .src_hostname + " в контексте пользователя " + .src_user_domain + "\\" + .src_user_name + " было обнаружено и не вылечено ВПО по пути " + .dst_object_path + " с вердиктом " + .dst_object_class
+  } else if %virus_not_deleted.device_event_id == "gnrl_ev_object_reported" {
+    .description, _err = "На хосте " + .src_hostname + " в контексте пользователя " + .src_user_domain + "\\" + .src_user_name + " было обнаружено и не обработано ВПО по пути " + .dst_object_path + " с вердиктом " + .dst_object_class
+  } else if %virus_not_deleted.device_event_id == "00000139" {
+    .description, _err = "На хосте " + .src_hostname + " в контексте пользователя " + .src_user_domain + "\\" + .src_user_name + " было обнаружено и не удалено ВПО по пути " + .dst_object_path + " с вердиктом " + .dst_object_class
+  } else if %virus_not_deleted.device_event_id == "000009fc" {
+    .description, _err = "На хосте " + .src_hostname + " в контексте пользователя " + .src_user_domain + "\\" + .src_user_name + " было обнаружено и не помещено на карантин ВПО по пути " + .dst_object_path + " с вердиктом " + .dst_object_class
+  }
+
+ttl: 20
+
+tests:
+  - name: (true) Вредоносный файл обнаружен и не удален
+    events:
+    - {"id":"25cc68e5-973a-43b1-96da-4879b1f01695","timestamp":"2025-10-06T12:06:32.000Z","collectorId":"0e0516ba-ae67-46cb-9ec1-1097f36cf264","type":"нормализованное событие","device_time":"2025-10-02T09:39:58.000Z","description":"Вредоносный объект eicar.txt обнаружен по пути: c:\\users\\abayramova\\desktop\\eicar.txt пользователь: sea\\abayramova (инициатор) причина: экспертный анализ md5: 44d88612fea8a8f36de82e1278abb02f","category":"attack","category_sub":"malware","action":"detect","outcome":"success","focus":"critical","name":"обнаружен вредоносный объект","device_class":"antivirus","device_vendor":"kaspersky","device_product":"ksc","device_version":"12.8.0.505","device_action":"обнаружено","device_severity":"critical","device_event_category":"защита от файловых угроз","device_event_code":"869169","device_event_id":"gnrl_ev_virus_found","device_message":"тип события: обнаружен вредоносный объект | название: notepad.exe | путь к приложению: c:\\windows\\system32 | id процесса: 16028 | описание результата: обнаружено | тип: вирус | название: eicar-test-file | пользователь: sea\\abayramova (инициатор) | объект: c:\\users\\abayramova\\desktop\\eicar.txt | причина: экспертный анализ | дата выпуска баз: 10/2/2025 7:18:00 am | sha256: 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f | md5: 44d88612fea8a8f36de82e1278abb02f","device_reason":"экспертный анализ","device_hostname":"ksc02","device_fqdn":"ksc02","agent_name":"ksc","src_ip":"::ffff:10.150.50.23","src_domain":"sea","src_user_name":"abayramova","src_user_domain":"sea","src_service_name":"ksc","dst_fqdn":"sea","src_hostname":"arm23","dst_file_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_file_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","dst_object_class":"eicar-test-file","dst_object_name":"eicar.txt","dst_object_type":"вирус","dst_object_path":"c:\\users\\abayramova\\desktop\\eicar.txt","dst_object_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_object_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","model_version":"2.0","normalization_rule_id":"RV-N-183","normalization_rule_name":"Kaspersky Security Center - сбор из СУБД","normalization_rule_version":"2.0.17"}
+    - {"id":"20888f65-469c-4078-9ed3-95a9c2544429","timestamp":"2025-10-06T12:06:32.000Z","collectorId":"0e0516ba-ae67-46cb-9ec1-1097f36cf264","type":"нормализованное событие","device_time":"2025-10-02T09:40:13.000Z","description":"Не удалось вылечить объект eicar.txt по пути: c:\\users\\abayramova\\desktop\\eicar.txt пользователь: sea\\abayramova (инициатор) md5: 44d88612fea8a8f36de82e1278abb02f","category":"attack","category_sub":"malware","action":"info","outcome":"success","focus":"critical","name":"лечение невозможно","device_class":"antivirus","device_vendor":"kaspersky","device_product":"ksc","device_version":"12.8.0.505","device_action":"не обработано","device_severity":"critical","device_event_category":"защита от файловых угроз","device_event_code":"869170","device_event_id":"gnrl_ev_object_notcured","device_message":"тип события: лечение невозможно | название: notepad.exe | путь к приложению: c:\\windows\\system32 | id процесса: 16028 | описание результата: не обработано | тип: вирус | название: eicar-test-file | пользователь: sea\\abayramova (инициатор) | объект: c:\\users\\abayramova\\desktop\\eicar.txt | причина: лечение невозможно | sha256: 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f | md5: 44d88612fea8a8f36de82e1278abb02f","device_reason":"лечение невозможно","device_hostname":"ksc02","device_fqdn":"ksc02","agent_name":"ksc","src_ip":"::ffff:10.150.50.23","src_domain":"sea","src_user_name":"abayramova","src_user_domain":"sea","src_service_name":"ksc","dst_fqdn":"sea","src_hostname":"arm23","dst_file_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_file_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","dst_object_class":"eicar-test-file","dst_object_name":"eicar.txt","dst_object_type":"вирус","dst_object_path":"c:\\users\\abayramova\\desktop\\eicar.txt","dst_object_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_object_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","model_version":"2.0","normalization_rule_id":"RV-N-183","normalization_rule_name":"Kaspersky Security Center - сбор из СУБД","normalization_rule_version":"2.0.17"}
+    assertion: !vrl |
+      assert_eq!(.[0].src_hostname, "arm23")
+      assert_eq!(.[0].device_product, "ksc")
+      assert_eq!(.[0].device_vendor, "kaspersky")
+      assert_eq!(.[0].device_fqdn, "ksc02")
+      assert_eq!(.[0].device_time, "2025-10-02T09:39:58.000Z")
+      assert_eq!(.[0].src_ip, "::ffff:10.150.50.23")
+      assert_eq!(.[0].src_user_domain, "sea")
+      assert_eq!(.[0].src_user_name, "abayramova")
+      assert_eq!(.[0].src_domain, "sea")
+      assert_eq!(.[0].dst_object_path, "c:\\users\\abayramova\\desktop\\eicar.txt")
+      assert_eq!(.[0].dst_object_hash_md5, "44d88612fea8a8f36de82e1278abb02f")
+      assert_eq!(.[0].dst_object_hash_sha256, "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f")
+      assert_eq!(.[0].device_hostname, "ksc02")
+      assert_eq!(.[0].dst_object_class, "eicar-test-file")
+
+  - name: (false) Вредоносное программное обеспечение обнаружено и удалено
+    events:
+    - {"id":"25cc68e5-973a-43b1-96da-4879b1f01695","timestamp":"2025-10-06T12:06:32.000Z","collectorId":"0e0516ba-ae67-46cb-9ec1-1097f36cf264","type":"нормализованное событие","device_time":"2025-10-02T09:39:58.000Z","description":"Вредоносный объект eicar.txt обнаружен по пути: c:\\users\\abayramova\\desktop\\eicar.txt пользователь: sea\\abayramova (инициатор) причина: экспертный анализ md5: 44d88612fea8a8f36de82e1278abb02f","category":"attack","category_sub":"malware","action":"detect","outcome":"success","focus":"critical","name":"обнаружен вредоносный объект","device_class":"antivirus","device_vendor":"kaspersky","device_product":"ksc","device_version":"12.8.0.505","device_action":"обнаружено","device_severity":"critical","device_event_category":"защита от файловых угроз","device_event_code":"869169","device_event_id":"gnrl_ev_virus_found","device_message":"тип события: обнаружен вредоносный объект | название: notepad.exe | путь к приложению: c:\\windows\\system32 | id процесса: 16028 | описание результата: обнаружено | тип: вирус | название: eicar-test-file | пользователь: sea\\abayramova (инициатор) | объект: c:\\users\\abayramova\\desktop\\eicar.txt | причина: экспертный анализ | дата выпуска баз: 10/2/2025 7:18:00 am | sha256: 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f | md5: 44d88612fea8a8f36de82e1278abb02f","device_reason":"экспертный анализ","device_hostname":"ksc02","device_fqdn":"ksc02","agent_name":"ksc","src_ip":"::ffff:10.150.50.23","src_domain":"sea","src_user_name":"abayramova","src_user_domain":"sea","src_service_name":"ksc","dst_fqdn":"sea","src_hostname":"arm23","dst_file_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_file_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","dst_object_class":"eicar-test-file","dst_object_name":"eicar.txt","dst_object_type":"вирус","dst_object_path":"c:\\users\\abayramova\\desktop\\eicar.txt","dst_object_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_object_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","model_version":"2.0","normalization_rule_id":"RV-N-183","normalization_rule_name":"Kaspersky Security Center - сбор из СУБД","normalization_rule_version":"2.0.17"}
+    - {"id":"cdb5a038-4d50-4843-bc25-aeb616413d27","timestamp":"2025-10-06T12:06:32.000Z","collectorId":"0e0516ba-ae67-46cb-9ec1-1097f36cf264","type":"нормализованное событие","device_time":"2025-10-02T09:40:29.000Z","description":"Вредоносный объект eicar.txt удален по пути: c:\\users\\abayramova\\desktop\\eicar.txt пользователь: sea\\abayramova (инициатор) md5: 44d88612fea8a8f36de82e1278abb02f","category":"attack","category_sub":"malware","action":"remove","outcome":"success","focus":"medium","name":"объект удален","device_class":"antivirus","device_vendor":"kaspersky","device_product":"ksc","device_version":"12.8.0.505","device_action":"удалено","device_severity":"warning","device_event_category":"защита от файловых угроз","device_event_code":"869172","device_event_id":"gnrl_ev_object_deleted","device_message":"тип события: объект удален | название: notepad.exe | путь к приложению: c:\\windows\\system32 | id процесса: 16028 | описание результата: удалено | тип: вирус | название: eicar-test-file | пользователь: sea\\abayramova (инициатор) | объект: c:\\users\\abayramova\\desktop\\eicar.txt | sha256: 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f | md5: 44d88612fea8a8f36de82e1278abb02f","device_hostname":"ksc02","device_fqdn":"ksc02","agent_name":"ksc","src_ip":"::ffff:10.150.50.23","src_domain":"sea","src_user_name":"abayramova","src_user_domain":"sea","src_service_name":"ksc","dst_fqdn":"sea","src_hostname":"arm23","dst_file_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_file_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","dst_object_class":"eicar-test-file","dst_object_name":"eicar.txt","dst_object_type":"вирус","dst_object_path":"c:\\users\\abayramova\\desktop\\eicar.txt","dst_object_hash_md5":"44d88612fea8a8f36de82e1278abb02f","dst_object_hash_sha256":"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f","model_version":"2.0","normalization_rule_id":"RV-N-183","normalization_rule_name":"Kaspersky Security Center - сбор из СУБД","normalization_rule_version":"2.0.17"}
+    assertion: !vrl |
+      assert_eq!(.[0].src_hostname, null)
+      assert_eq!(.[0].dst_object_name, null)
+      assert_eq!(.[0].src_user_name, null)
+      assert_eq!(.[0].src_domain, null)
+      assert_eq!(.[0].src_ip, null)
+      assert_eq!(.[0].src_file_name, null)
+      assert_eq!(.[0].device_product, null)
+      assert_eq!(.[0].device_event_id, null)
+      assert_eq!(.[0].dst_object_path, null)
+      assert_eq!(.[0].dst_object_hash_sha256, null)

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "rvision-rule-sync"
+version = "0.3.0"
+description = "Offline structural comparison and conservative merging of R-Vision rules"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0.2,<7"]
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+[project.scripts]
+rvision-rule-sync = "rvision_rule_sync.cli:main"
+[tool.setuptools.packages.find]
+include = ["rvision_rule_sync*"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]

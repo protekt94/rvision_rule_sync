@@ -1,0 +1,36 @@
+id: RV-D-DEMO1
+rid: 00000000-0000-4000-8000-000000000001
+name: Synthetic example rule
+version: 1.0.3
+date: '2026-01-01'
+author: Example Author
+type: correlation_rule
+description: Synthetic data for testing the comparison tool.
+known_false_positives:
+- Synthetic condition A
+- Synthetic condition B
+filter: !vrl |
+  .device_vendor == "example"
+aliases:
+  virus_detected:
+    filter: !vrl |
+      .event_kind == "demo"
+select:
+  alias: virus_detected
+  join:
+    alias: virus_detected
+    'on':
+    - eq:
+        a: .id
+        b: .id
+on_correlate: !vrl |
+  .groupedBy = ["example_host"]
+  .description = "Synthetic event"
+ttl: 20
+tests:
+- name: Synthetic event
+  events:
+  - device_vendor: example
+    event_kind: demo
+  assertion: !vrl |
+    assert_eq!(true, true)

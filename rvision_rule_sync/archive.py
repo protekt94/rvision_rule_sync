@@ -1,15 +1,16 @@
 """Bounded ZIP/TAR extraction without links or traversal."""
 import stat
+import zlib
 import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from .core import SyncError, read, ID
+from .core import SyncError, read, ID, SUFFIX
 
 MAX_FILES = 20000
 MAX_BYTES = 512 * 1024 * 1024
 
 
-def extract(source, destination):
+def _extract(source, destination):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     seen, total = set(), 0
@@ -67,10 +68,18 @@ def extract(source, destination):
     return destination
 
 
+def extract(source, destination):
+    try:
+        return _extract(source, destination)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, tarfile.TarError,
+            EOFError, RuntimeError, NotImplementedError, zlib.error) as exc:
+        raise SyncError(f'Cannot read archive {source}: {exc}') from exc
+
+
 def index(source, prefix):
     source = Path(source)
     paths = [source] if source.is_file() else sorted(source.rglob('*.ro'))
-    result = {}
+    result, folded_ids = {}, set()
     for path in paths:
         if path.is_symlink():
             raise SyncError(f'Symlink rule: {path}')
@@ -83,9 +92,10 @@ def index(source, prefix):
             raise SyncError(f'Missing string id: {path}')
         if not rule_id.startswith(prefix):
             continue
-        if not ID.fullmatch(rule_id):
+        if not ID.fullmatch(rule_id) or not SUFFIX.fullmatch(rule_id[len(prefix):]):
             raise SyncError(f'Unsafe rule id: {rule_id}')
-        if rule_id in result:
-            raise SyncError(f'Duplicate rule id: {rule_id}')
+        if rule_id.casefold() in folded_ids:
+            raise SyncError(f'Duplicate rule id (case-insensitive): {rule_id}')
+        folded_ids.add(rule_id.casefold())
         result[rule_id] = (path, rule)
     return result

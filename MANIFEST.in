@@ -1,0 +1,16 @@
+include README.md VALIDATION.md .gitignore
+recursive-include rvision_rule_sync *.py
+recursive-include tests *.py
+recursive-include tests/fixtures *.ro *.md
+recursive-include examples *.py *.md
+prune custom
+prune SIEM
+prune reports
+prune content
+prune private-fixtures
+prune example-report
+prune example-direct-report
+prune .venv
+prune build
+prune dist
+global-exclude *.roc *.zip *.py[cod] .DS_Store

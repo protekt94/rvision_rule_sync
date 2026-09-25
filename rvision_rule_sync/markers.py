@@ -1,6 +1,6 @@
 """Locate user annotations without removing or rewriting any source text."""
-START = '# start'
-END = '# end'
+START = '# начало моих изменений'
+END = '# конец моих изменений'
 
 
 def custom_regions(rule):

@@ -1,13 +1,14 @@
 import argparse
 import json
 import shutil
+import sys
 import tempfile
 import uuid
 from collections import Counter
 from pathlib import Path
 from .archive import extract, index
-from .core import SyncError, blocks, compare, digest, dump, read
-from .direct import direct_compare, block_diff, fenced, region_markdown
+from .core import SyncError, blocks, compare, digest, dump, read, normalize_custom_prefix, upstream_id
+from .direct import direct_compare, block_diff, fenced, region_markdown, escape_md
 
 
 def source_index(source, scratch, prefix, allow_empty=False):
@@ -22,7 +23,8 @@ def source_index(source, scratch, prefix, allow_empty=False):
     return result
 
 
-def bootstrap(workspace, base, custom, verified=False):
+def bootstrap(workspace, base, custom, verified=False, *, custom_prefix):
+    custom_prefix = normalize_custom_prefix(custom_prefix)
     workspace = Path(workspace)
     if workspace.exists():
         raise SyncError('Bootstrap destination already exists; choose a new workspace')
@@ -30,13 +32,13 @@ def bootstrap(workspace, base, custom, verified=False):
     with tempfile.TemporaryDirectory(dir=workspace.parent) as temporary:
         temp = Path(temporary)
         vendor = source_index(base, temp / 'vendor', 'RV-')
-        ours = source_index(custom, temp / 'custom-source', 'VI-')
+        ours = source_index(custom, temp / 'custom-source', custom_prefix)
         staged = temp / 'workspace'
         for folder in ('custom', 'base'):
             (staged / folder).mkdir(parents=True)
-        state = {'schema': 1, 'rules': {}}
+        state = {'schema': 2, 'custom_prefix': custom_prefix, 'rules': {}}
         for cid, (path, rule) in ours.items():
-            uid = 'RV-' + cid[3:]
+            uid = upstream_id(cid, custom_prefix)
             if uid not in vendor:
                 raise SyncError(f'Baseline missing: {uid}')
             base_path, baseline = vendor[uid]
@@ -56,25 +58,64 @@ def report(results, vendor_count):
         lines.append(f'| {status} | {counts[status]} |')
     for r in results:
         lines += ['', f"## {r['id']} ← {r['upstream_id']}: {r['status']}", '',
-                  'Custom blocks: ' + (', '.join(r['custom']) or 'none'), '',
-                  'Vendor blocks: ' + (', '.join(r['vendor']) or 'none'), '',
-                  'Conflicts: ' + (', '.join(r['conflicts']) or 'none'), '', r.get('reason', '')]
+                  'Custom blocks: ' + (', '.join(escape_md(k) for k in r['custom']) or 'none'), '',
+                  'Vendor blocks: ' + (', '.join(escape_md(k) for k in r['vendor']) or 'none'), '',
+                  'Conflicts: ' + (', '.join(escape_md(k) for k in r['conflicts']) or 'none'), '', r.get('reason', '')]
         if r.get('output'):
             lines += ['', f"Candidate: [{r['output']}]({r['output']})"]
         lines += region_markdown(r)
         for block, comparisons in r.get('diffs', {}).items():
-            lines += ['', f'### {block}']
+            lines += ['', f'### {escape_md(block)}']
             for label, diff in comparisons.items():
                 lines += ['', label, ''] + fenced(diff)
     return '\n'.join(lines) + '\n'
 
 
-def analyze(workspace, upstream):
-    workspace = Path(workspace)
-    state = json.loads((workspace / 'state.json').read_text(encoding='utf-8'))
-    if state.get('schema') != 1:
+def load_state(path):
+    state = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(state, dict) or type(state.get('schema')) is not int or state['schema'] not in (1, 2):
         raise SyncError('Unsupported state schema')
-    ours = index(workspace / 'custom', 'VI-')
+    entries = state.get('rules')
+    if not isinstance(entries, dict):
+        raise SyncError('Invalid state rules: expected a mapping')
+    prefix = state.get('custom_prefix')
+    if prefix is None and state['schema'] == 1:
+        # Recover old workspaces from their explicit ID mappings, never a personal default.
+        candidates = set()
+        for cid, entry in entries.items():
+            uid = entry.get('upstream_id') if isinstance(entry, dict) else None
+            if not isinstance(uid, str) or not uid.startswith('RV-') or not uid[3:]:
+                raise SyncError(f'Invalid legacy state entry: {cid}')
+            suffix = uid[3:]
+            if not isinstance(cid, str) or not cid.endswith(suffix):
+                raise SyncError(f'Invalid legacy ID mapping: {cid}')
+            candidate = cid[:-len(suffix)]
+            if normalize_custom_prefix(candidate) != candidate:
+                raise SyncError(f'Invalid legacy prefix: {candidate!r}')
+            candidates.add(candidate)
+        if len(candidates) != 1:
+            raise SyncError('Legacy workspace must have one unambiguous custom prefix')
+        prefix = candidates.pop()
+    prefix = normalize_custom_prefix(prefix)
+    state['custom_prefix'] = prefix
+    for cid, entry in entries.items():
+        if (not isinstance(entry, dict) or entry.get('upstream_id') != upstream_id(cid, prefix) or
+                not isinstance(entry.get('base_hash'), str) or
+                len(entry['base_hash']) != 64 or
+                any(ch not in '0123456789abcdef' for ch in entry['base_hash']) or
+                type(entry.get('baseline_verified')) is not bool):
+            raise SyncError(f'Invalid state entry: {cid}')
+    return state
+
+
+def analyze(workspace, upstream, *, custom_prefix=None):
+    workspace = Path(workspace)
+    state = load_state(workspace / 'state.json')
+    saved_prefix = state['custom_prefix']
+    if custom_prefix is not None and normalize_custom_prefix(custom_prefix) != saved_prefix:
+        raise SyncError(f'Workspace uses prefix {saved_prefix}; --custom-prefix cannot remap its baseline')
+    custom_prefix = saved_prefix
+    ours = index(workspace / 'custom', custom_prefix)
     if not ours:
         raise SyncError('No custom rules')
     runs = workspace / 'runs'
@@ -87,7 +128,7 @@ def analyze(workspace, upstream):
             (staged / folder).mkdir(parents=True)
         results = []
         for cid, (path, custom) in ours.items():
-            uid = 'RV-' + cid[3:]
+            uid = upstream_id(cid, custom_prefix)
             entry = state['rules'].get(cid)
             if not entry or entry.get('upstream_id') != uid:
                 raise SyncError(f'Bootstrap entry missing or invalid: {cid}')
@@ -115,6 +156,17 @@ def analyze(workspace, upstream):
     return destination, results
 
 
+def requested_prefix(value):
+    if value is None:
+        if not sys.stdin.isatty():
+            raise SyncError('Set --custom-prefix, for example --custom-prefix SOC-')
+        try:
+            value = input('Custom rule prefix (for example SOC-): ').strip()
+        except EOFError as exc:
+            raise SyncError('No prefix supplied; use --custom-prefix') from exc
+    return normalize_custom_prefix(value)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Offline R-Vision rule comparison and synchronization')
     commands = parser.add_subparsers(dest='command', required=True)
@@ -130,15 +182,21 @@ def main(argv=None):
     analysis = commands.add_parser('analyze')
     analysis.add_argument('--workspace', required=True, type=Path)
     analysis.add_argument('upstream', type=Path)
+    for command in (direct, boot):
+        command.add_argument('--custom-prefix', help='Custom ID prefix, e.g. SOC-; prompted if omitted in a terminal')
+    analysis.add_argument('--custom-prefix', help='Optional check against the prefix saved by bootstrap')
+    parser.add_argument('--version', action='version', version='%(prog)s 0.4.0')
     args = parser.parse_args(argv)
     try:
+        if args.command in ('compare', 'bootstrap'):
+            args.custom_prefix = requested_prefix(args.custom_prefix)
         if args.command == 'bootstrap':
-            print(bootstrap(args.workspace, args.base, args.custom, args.baseline_verified))
+            print(bootstrap(args.workspace, args.base, args.custom, args.baseline_verified, custom_prefix=args.custom_prefix))
             return 0
         if args.command == 'compare':
-            destination, results = direct_compare(args.custom, args.packages, args.output)
+            destination, results = direct_compare(args.custom, args.packages, args.output, custom_prefix=args.custom_prefix)
         else:
-            destination, results = analyze(args.workspace, args.upstream)
+            destination, results = analyze(args.workspace, args.upstream, custom_prefix=args.custom_prefix)
         print(destination / 'report.md')
         print(dict(Counter(r['status'] for r in results)))
         return 2 if any(r['status'] in ('REVIEW_REQUIRED', 'ORPHANED') for r in results) else 0

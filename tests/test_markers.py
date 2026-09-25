@@ -16,7 +16,7 @@ def marked(code='.custom = true\n'):
 @pytest.mark.parametrize('operation', ['added', 'changed', 'removed'])
 def test_tests_excluded_everywhere(key, operation):
     base = {'id': 'RV-D-1', 'filter': VRL('true\n'), key: ['base']}
-    ours = dict(base, id='VI-D-1')
+    ours = dict(base, id='CUSTOM-D-1')
     vendor = deepcopy(base)
     if operation == 'added':
         base.pop(key)
@@ -26,7 +26,7 @@ def test_tests_excluded_everywhere(key, operation):
     else:
         vendor[key] = ['vendor']
         ours[key] = ['custom']
-    direct = compare_pair(ours, vendor)
+    direct = compare_pair(ours, vendor, custom_prefix='CUSTOM-')
     three = compare(base, ours, vendor)
     assert direct['status'] == three['status'] == 'NO_CHANGE'
     assert not direct['diffs'] and not three['vendor']
@@ -55,18 +55,18 @@ def test_markers_nested_paths_and_crlf():
 
 @pytest.mark.parametrize('text', [START+'\ntrue', END, START+'\n'+START+'\n'+END])
 def test_bad_markers_require_review(text):
-    ours = {'id': 'VI-D-1', 'filter': VRL(text)}
+    ours = {'id': 'CUSTOM-D-1', 'filter': VRL(text)}
     vendor = dict(ours, id='RV-D-1')
-    assert compare_pair(ours, vendor)['status'] == 'REVIEW_REQUIRED'
-    assert compare_pair(ours, vendor)['marker_warnings']
+    assert compare_pair(ours, vendor, custom_prefix='CUSTOM-')['status'] == 'REVIEW_REQUIRED'
+    assert compare_pair(ours, vendor, custom_prefix='CUSTOM-')['marker_warnings']
     assert compare(vendor, ours, vendor)['status'] == 'REVIEW_REQUIRED'
     # Orphan remains visible even when markers are invalid.
-    assert compare_pair(ours, None)['status'] == 'ORPHANED'
+    assert compare_pair(ours, None, custom_prefix='CUSTOM-')['status'] == 'ORPHANED'
 
 
 def test_markers_are_not_ignored_or_overwritten():
     base = {'id': 'RV-D-1', 'filter': VRL('true\n'), 'on_correlate': VRL('.x = 0\n')}
-    ours = dict(base, id='VI-D-1', on_correlate=marked('.x = 1\n'))
+    ours = dict(base, id='CUSTOM-D-1', on_correlate=marked('.x = 1\n'))
     vendor = dict(base, filter=VRL('false\n'))
     result = compare(base, ours, vendor)
     assert result['status'] == 'AUTO_MERGE'
@@ -75,14 +75,14 @@ def test_markers_are_not_ignored_or_overwritten():
     result = compare(base, ours, vendor)
     assert result['status'] == 'REVIEW_REQUIRED' and result['generated'] is None
     assert result['conflicts'] == ['on_correlate']
-    assert 'on_correlate' in compare_pair(ours, vendor)['different_blocks']
-    assert compare_pair(ours, vendor)['custom_regions'][0]['code'] == '.x = 1\n'
+    assert 'on_correlate' in compare_pair(ours, vendor, custom_prefix='CUSTOM-')['different_blocks']
+    assert compare_pair(ours, vendor, custom_prefix='CUSTOM-')['custom_regions'][0]['code'] == '.x = 1\n'
 
 
 def test_report_shows_regions_and_not_tests():
-    ours = {'id': 'VI-D-1', 'aliases': [{'filter': marked('.x = "```"\n')}], 'tests': ['SECRET_TEST']}
+    ours = {'id': 'CUSTOM-D-1', 'aliases': [{'filter': marked('.x = "```"\n')}], 'tests': ['SECRET_TEST']}
     vendor = {'id': 'RV-D-1', 'aliases': [], 'tests': ['DIFFERENT_TEST']}
-    result = compare_pair(ours, vendor)
+    result = compare_pair(ours, vendor, custom_prefix='CUSTOM-')
     result.update(package_label='new.roc', snapshot='package-001')
     text = markdown([result])
     assert 'Мои критичные изменения' in text and 'aliases/0/filter' in text
@@ -90,7 +90,7 @@ def test_report_shows_regions_and_not_tests():
     assert '````vrl' in text  # source cannot close its own fence
     assert 'SECRET_TEST' not in text and 'DIFFERENT_TEST' not in text
     three = compare(vendor, ours, vendor)
-    three.update(id='VI-D-1', upstream_id='RV-D-1')
+    three.update(id='CUSTOM-D-1', upstream_id='RV-D-1')
     assert 'Мои критичные изменения' in report([three], 1)
 
 
@@ -101,15 +101,15 @@ def test_inline_marker_string_is_not_annotation():
 
 def test_analyze_preserves_tests_and_regions(tmp_path):
     base = {'id': 'RV-D-1', 'filter': VRL('true\n'), 'on_correlate': VRL('.x = 0\n'), 'tests': ['BASE']}
-    ours = dict(base, id='VI-D-1', on_correlate=marked(), tests=['CUSTOM'])
+    ours = dict(base, id='CUSTOM-D-1', on_correlate=marked(), tests=['CUSTOM'])
     vendor = dict(base, filter=VRL('false\n'), tests=['VENDOR'])
     for name, rule in [('base',base), ('custom',ours), ('vendor',vendor)]:
-        (tmp_path / f'{name}.ro').write_text(dump(rule))
-    ws = bootstrap(tmp_path/'ws', tmp_path/'base.ro', tmp_path/'custom.ro', True)
+        (tmp_path / f'{name}.ro').write_text(dump(rule), encoding='utf-8')
+    ws = bootstrap(tmp_path/'ws', tmp_path/'base.ro', tmp_path/'custom.ro', True, custom_prefix='CUSTOM-')
     run, results = analyze(ws, tmp_path/'vendor.ro')
     assert results[0]['status'] == 'AUTO_MERGE'
-    generated = parse((run/'generated/VI-D-1.ro').read_text())
+    generated = parse((run/'generated/CUSTOM-D-1.ro').read_text(encoding='utf-8'))
     assert generated['tests'] == ['CUSTOM']
     assert generated['on_correlate'] == ours['on_correlate']
     assert 'tests' not in results[0]['diffs']
-    assert json.loads((run/'results.json').read_text())[0]['custom_regions']
+    assert json.loads((run/'results.json').read_text(encoding='utf-8'))[0]['custom_regions']

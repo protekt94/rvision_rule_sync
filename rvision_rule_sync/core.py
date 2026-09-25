@@ -17,7 +17,17 @@ class VRL(str):
 
 
 class Loader(yaml.SafeLoader):
-    pass
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.AliasEvent):
+            raise SyncError('YAML aliases are not supported')
+        depth = getattr(self, '_rule_depth', 0)
+        if depth >= 80:
+            raise SyncError('Excessively nested YAML')
+        self._rule_depth = depth + 1
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            self._rule_depth = depth
 
 
 Loader.yaml_implicit_resolvers = {
@@ -80,8 +90,15 @@ def parse(text):
         raise SyncError(f'Invalid YAML: {exc}') from exc
 
 
+MAX_RULE_BYTES = 16 * 1024 * 1024
+
+
 def read(path):
-    return parse(Path(path).read_text(encoding='utf-8-sig'))
+    with Path(path).open('rb') as stream:
+        raw = stream.read(MAX_RULE_BYTES + 1)
+    if len(raw) > MAX_RULE_BYTES:
+        raise SyncError(f'Rule exceeds {MAX_RULE_BYTES} bytes: {path}')
+    return parse(raw.decode('utf-8-sig'))
 
 
 def dump(data):
@@ -92,7 +109,25 @@ BLOCKS = ('metadata', 'filter', 'aliases', 'select', 'group', 'ttl', 'throttle_t
 META = set('name version date author status description response reference references incident_taxonomy tags data_source known_false_positives metadata'.split())
 IDENTITY = {'id', 'rid'}
 IGNORED = {'test', 'tests'}
-ID = re.compile(r'^(?:VI|RV)-[A-Za-z0-9][A-Za-z0-9_-]*$')
+ID = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*$')
+SUFFIX = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]*$')
+
+
+def normalize_custom_prefix(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', value):
+        raise SyncError('Custom prefix must start with an ASCII letter and contain only letters, digits, _ or -')
+    prefix = value if value.endswith('-') else value + '-'
+    if prefix.casefold().startswith('rv-'):
+        raise SyncError('RV- is reserved for vendor rules; choose a different custom prefix')
+    return prefix
+
+
+def upstream_id(custom_id, custom_prefix):
+    prefix = normalize_custom_prefix(custom_prefix)
+    if (not isinstance(custom_id, str) or not ID.fullmatch(custom_id) or
+            not custom_id.startswith(prefix) or not SUFFIX.fullmatch(custom_id[len(prefix):])):
+        raise SyncError(f'Invalid custom rule id for prefix {prefix}: {custom_id!r}')
+    return 'RV-' + custom_id[len(prefix):]
 
 
 def blocks(rule):
@@ -115,7 +150,9 @@ def compare(base, ours, theirs, verified=True):
         return result
     t = blocks(theirs)
     vendor = changes(b, t)
-    conflicts = sorted(set(custom) & set(vendor))
+    protected = {('metadata' if region['block'] in META else region['block'])
+                 for region in result['custom_regions']}
+    conflicts = sorted((set(custom) | protected) & set(vendor))
     result.update(vendor=vendor, conflicts=conflicts)
     if not verified:
         result.update(status='REVIEW_REQUIRED', reason='Baseline is not verified')

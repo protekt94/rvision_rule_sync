@@ -1,10 +1,31 @@
+# Python/build/tooling
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-reports/
+.coverage*
+htmlcov/
+build/
+dist/
+.DS_Store
+.env
+.env.*
+
+# Private operational data: only synthetic test rules are allowed
+*.ro
+!tests/fixtures/*.ro
+*.roc
+*.zip
 custom/*
 !custom/.gitkeep
 SIEM/*
 !SIEM/.gitkeep
+reports/
+**/runs/
+content/
+state.json
+private-fixtures/
+example-report/
+example-direct-report/

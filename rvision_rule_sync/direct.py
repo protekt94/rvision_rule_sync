@@ -1,4 +1,5 @@
 """Compare current custom rules with each supplied package without a baseline."""
+
 import difflib
 import glob
 import html
@@ -7,6 +8,7 @@ import re
 import tempfile
 import uuid
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from .archive import extract, index
 from .markers import custom_regions
@@ -150,6 +152,6 @@ def direct_compare(custom, sources, output, *, custom_prefix):
         (staged / 'report.md').write_text(markdown(results), encoding='utf-8')
         for name, data in [('results', results), ('packages', manifest)]:
             (staged / f'{name}.json').write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        destination = output / uuid.uuid4().hex
+        destination = output / f"{datetime.now()}_{uuid.uuid4().hex}"
         staged.rename(destination)
     return destination, results

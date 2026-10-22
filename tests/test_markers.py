@@ -64,7 +64,7 @@ def test_bad_markers_require_review(text):
     assert compare_pair(ours, None, custom_prefix='CUSTOM-')['status'] == 'ORPHANED'
 
 
-def test_markers_are_not_ignored_or_overwritten():
+def test_markers_are_ignored_but_preserved():
     base = {'id': 'RV-D-1', 'filter': VRL('true\n'), 'on_correlate': VRL('.x = 0\n')}
     ours = dict(base, id='CUSTOM-D-1', on_correlate=marked('.x = 1\n'))
     vendor = dict(base, filter=VRL('false\n'))
@@ -73,10 +73,11 @@ def test_markers_are_not_ignored_or_overwritten():
     assert result['generated']['on_correlate'] == ours['on_correlate']
     vendor['on_correlate'] = VRL('.x = 2\n')
     result = compare(base, ours, vendor)
-    assert result['status'] == 'REVIEW_REQUIRED' and result['generated'] is None
-    assert result['conflicts'] == ['on_correlate']
-    assert 'on_correlate' in compare_pair(ours, vendor, custom_prefix='CUSTOM-')['different_blocks']
-    assert compare_pair(ours, vendor, custom_prefix='CUSTOM-')['custom_regions'][0]['code'] == '.x = 1\n'
+    assert result['status'] == 'AUTO_MERGE'
+    assert result['generated']['on_correlate'] == ours['on_correlate']
+    direct = compare_pair(ours, vendor, custom_prefix='CUSTOM-')
+    assert 'on_correlate' not in direct['different_blocks']
+    assert direct['custom_regions'][0]['code'] == '.x = 1\n'
 
 
 def test_report_shows_regions_and_not_tests():
@@ -85,13 +86,13 @@ def test_report_shows_regions_and_not_tests():
     result = compare_pair(ours, vendor, custom_prefix='CUSTOM-')
     result.update(package_label='new.roc', snapshot='package-001')
     text = markdown([result])
-    assert 'Мои критичные изменения' in text and 'aliases/0/filter' in text
-    assert 'содержит мои критичные изменения' in text
+    assert 'Защищённые участки (исключены из сравнения)' in text and 'aliases/0/filter' in text
+    assert 'Защищённые участки' in text
     assert '````vrl' in text  # source cannot close its own fence
     assert 'SECRET_TEST' not in text and 'DIFFERENT_TEST' not in text
     three = compare(vendor, ours, vendor)
     three.update(id='CUSTOM-D-1', upstream_id='RV-D-1')
-    assert 'Мои критичные изменения' in report([three], 1)
+    assert 'Защищённые участки (исключены из сравнения)' in report([three], 1)
 
 
 def test_inline_marker_string_is_not_annotation():

@@ -12,14 +12,14 @@ from rvision_rule_sync.core import SyncError, VRL, compare, parse, read
 from rvision_rule_sync.direct import markdown, packages
 
 
-def test_critical_region_in_unchanged_custom_still_protected():
-    code = VRL('# начало моих изменений\n.x = 1\n# конец моих изменений\n')
-    base = {'id':'RV-D-1', 'on_correlate':code}
+def test_protected_region_is_excluded_from_comparison():
+    code = VRL('### start\n.x = 1\n### end\n')
+    base = {'id': 'RV-D-1', 'on_correlate': code}
     ours = dict(base, id='CUSTOM-D-1')
     theirs = dict(base, on_correlate=VRL('.x = 2\n'))
     result = compare(base, ours, theirs)
-    assert result['status'] == 'REVIEW_REQUIRED'
-    assert result['conflicts'] == ['on_correlate'] and result['generated'] is None
+    assert result['status'] == 'NO_CHANGE'
+    assert not result['conflicts'] and result['generated'] is None
 
 
 def test_protected_metadata_maps_to_semantic_block():

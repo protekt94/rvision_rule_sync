@@ -29,3 +29,9 @@ state.json
 private-fixtures/
 example-report/
 example-direct-report/
+
+# IDE/local editors
+.idea/
+.vscode/
+.mypy_cache/
+.ruff_cache/

@@ -1,4 +1,4 @@
-include README.md VALIDATION.md .gitignore
+include README.md VALIDATION.md CHANGELOG.md .gitignore
 recursive-include rvision_rule_sync *.py
 recursive-include tests *.py
 recursive-include tests/fixtures *.ro *.md

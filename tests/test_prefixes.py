@@ -22,7 +22,9 @@ def test_configurable_prefix_end_to_end(tmp_path, prefix):
     run, results = direct_compare(tmp_path/'custom.ro', [package], tmp_path/'reports', custom_prefix=prefix)
     assert results[0]['id'] == cid and results[0]['upstream_id'] == 'RV-D-100'
     assert results[0]['custom_prefix'] == normalized
-    assert (run/'package-001/CUSTOM'/f'{cid}.ro').exists()
+    assert (run/'report.md').exists()
+    assert (run/'results.json').exists()
+    assert not (run/'package-001').exists()
     ws = bootstrap(tmp_path/'ws', tmp_path/'base.ro', tmp_path/'custom.ro', True, custom_prefix=prefix)
     state = load_state(ws/'state.json')
     assert state['schema'] == 2 and state['custom_prefix'] == normalized

@@ -52,7 +52,7 @@ def bootstrap(workspace, base, custom, verified=False, *, custom_prefix):
 
 def report(results, vendor_count):
     counts = Counter(r['status'] for r in results)
-    lines = ['# R-Vision rule sync', '', 'test/tests исключены из сравнения и переноса; сохраняются из custom.', '', f'Vendor rules: {vendor_count}; custom rules: {len(results)}', '',
+    lines = ['# R-Vision rule sync', '', 'Служебные поля и весь код между ### start / ### end исключены из сравнения; исходные VRL и test/tests сохраняются при слиянии.', '', f'Vendor rules: {vendor_count}; custom rules: {len(results)}', '',
              '| Status | Count |', '|---|---:|']
     for status in ('NO_CHANGE', 'METADATA_ONLY', 'AUTO_MERGE', 'REVIEW_REQUIRED', 'ORPHANED'):
         lines.append(f'| {status} | {counts[status]} |')
@@ -124,7 +124,7 @@ def analyze(workspace, upstream, *, custom_prefix=None):
         temp = Path(temporary)
         vendor = source_index(upstream, temp / 'unpacked', 'RV-', allow_empty=True)
         staged = temp / 'result'
-        for folder in ('BASE', 'OURS', 'THEIRS', 'generated'):
+        for folder in ('generated',):
             (staged / folder).mkdir(parents=True)
         results = []
         for cid, (path, custom) in ours.items():
@@ -138,14 +138,11 @@ def analyze(workspace, upstream, *, custom_prefix=None):
             theirs = vendor.get(uid, (None, None))[1]
             r = compare(baseline, custom, theirs, entry.get('baseline_verified') is True)
             r.update(id=cid, upstream_id=uid)
-            for label, rule in [('BASE', baseline), ('OURS', custom), ('THEIRS', theirs)]:
-                if rule is not None:
-                    (staged / label / f'{rule["id"]}.ro').write_text(dump(rule), encoding='utf-8')
             generated = r.pop('generated')
             if generated is not None:
                 r['output'] = f'generated/{cid}.ro'
                 (staged / r['output']).write_text(dump(generated), encoding='utf-8')
-            r['diffs'] = {key: {f'BASE → {label}': block_diff(blocks(baseline), blocks(rule), key, 'BASE', label)
+            r['diffs'] = {key: {f'BASE → {label}': block_diff(blocks(baseline, protected_by=custom), blocks(rule, protected_by=custom), key, 'BASE', label)
                 for label, rule in [('OURS', custom), ('THEIRS', theirs)] if rule is not None}
                 for key in sorted(set(r['custom']) | set(r['vendor']))}
             results.append(r)
@@ -185,7 +182,7 @@ def main(argv=None):
     for command in (direct, boot):
         command.add_argument('--custom-prefix', help='Custom ID prefix, e.g. SOC-; prompted if omitted in a terminal')
     analysis.add_argument('--custom-prefix', help='Optional check against the prefix saved by bootstrap')
-    parser.add_argument('--version', action='version', version='%(prog)s 0.4.0')
+    parser.add_argument('--version', action='version', version='%(prog)s 0.4.1')
     args = parser.parse_args(argv)
     try:
         if args.command in ('compare', 'bootstrap'):

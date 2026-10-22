@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from .archive import extract, index
 from .markers import custom_regions
-from .core import SyncError, blocks, changes, digest, dump, normalize_custom_prefix, upstream_id
+from .core import SyncError, VRL, blocks, changes, digest, dump, normalize_custom_prefix, upstream_id
 
 
 def packages(sources):
@@ -36,7 +36,12 @@ def packages(sources):
 
 def block_diff(left, right, key, left_label, right_label):
     def text(values):
-        return dump({key: values[key]}) if key in values else '# BLOCK ABSENT\n'
+        if key not in values:
+            return '# BLOCK ABSENT\n'
+        value = values[key]
+        if isinstance(value, VRL):
+            return str(value).replace('\r\n', '\n').replace('\r', '\n').rstrip('\n') + '\n'
+        return dump({key: value})
     return ''.join(difflib.unified_diff(text(left).splitlines(True), text(right).splitlines(True),
                                        fromfile=left_label, tofile=right_label))
 
@@ -55,12 +60,16 @@ def escape_md(value):
 def region_markdown(result):
     lines = []
     if result.get('custom_regions'):
-        lines += ['### Мои критичные изменения', '',
-                  'Строки отсчитываются внутри текстового блока, включая строки маркеров.', '']
+        lines += ['### Защищённые участки (исключены из сравнения)', '',
+                  'Для VRL строки отсчитываются внутри блока; для YAML — внутри исходного .ro.', '']
         for region in result['custom_regions']:
             path = '/'.join(str(part) for part in region['path'])
-            lines += [f"**{escape_md(path)}, строки {region['start_line']}–{region['end_line']}**", '']
-            lines += fenced(region['code'], 'vrl')
+            kind = region.get('kind')
+            location = 'строки исходного .ro' if kind == 'yaml' else 'строки текстового блока'
+            names = (f"; поля: {', '.join(escape_md(key) for key in region['keys'])}"
+                     if kind == 'yaml' else '')
+            lines += [f"**{escape_md(path)}, {location} {region['start_line']}–{region['end_line']}{names}**", '']
+            lines += fenced(region['code'], 'yaml' if kind == 'yaml' else 'vrl')
     if result.get('marker_warnings'):
         lines += ['### Проверьте маркеры', '']
         for warning in result['marker_warnings']:
@@ -82,7 +91,9 @@ def compare_pair(custom, vendor, *, custom_prefix):
     result.update(custom_regions(custom))
     if vendor is None:
         return result
-    theirs = blocks(vendor)
+    alignment_warnings = []
+    theirs = blocks(vendor, protected_by=custom, warnings=alignment_warnings)
+    result['marker_warnings'].extend(alignment_warnings)
     different = changes(ours, theirs)
     result.update(different_blocks=different, status=('NO_CHANGE' if not different else
                   'METADATA_ONLY' if different == ['metadata'] else 'REVIEW_REQUIRED'))
@@ -98,7 +109,9 @@ def markdown(results):
     lines = ['# Сравнение custom с пакетами SIEM', '',
              'Прямое сравнение без BASE. Различия могут быть намеренными кастомизациями.',
              'Знаки − показывают custom, знаки + — SIEM. Автоматического слияния нет.',
-             '`id`, `rid`, `test`, `tests` исключены из сравнения. Отмеченные правки учитываются целиком.', '',
+             'Исключены: `id`, `rid`, `test`, `tests`, `version`, `author`, `date`, `correlation_rule_version`.',
+             'В VRL исключены служебные присваивания и защищённые фрагменты; в YAML исключены целые поля, охваченные маркерами верхнего уровня.',
+             'Соответствующий участок SIEM определяется по неизменённым строкам вокруг маркеров; при неоднозначности требуется проверка.', '',
              '| Статус | Количество пар правило/пакет |', '|---|---:|']
     counts = Counter(r['status'] for r in results)
     for status in ('NO_CHANGE', 'METADATA_ONLY', 'REVIEW_REQUIRED', 'ORPHANED'):
@@ -110,9 +123,9 @@ def markdown(results):
         if r['status'] == 'ORPHANED':
             lines.append('Соответствующее RV-правило отсутствует в этом пакете.')
         lines += region_markdown(r)
-        critical = {region['block'] for region in r.get('custom_regions', [])}
+        critical = {key for region in r.get('custom_regions', []) for key in region.get('keys', [region['block']])}
         for key in sorted(r['diffs'], key=lambda k: (k not in critical, k)):
-            label = ' — содержит мои критичные изменения' if key in critical else ''
+            label = ' — присутствуют защищённые участки' if key in critical else ''
             lines += [f'### {escape_md(key)}{label}', ''] + fenced(r['diffs'][key])
     return '\n'.join(lines) + '\n'
 
@@ -136,8 +149,6 @@ def direct_compare(custom, sources, output, *, custom_prefix):
             with tempfile.TemporaryDirectory(dir=temp) as unpacked:
                 vendor = index(extract(package, unpacked), 'RV-')
                 label = f'package-{number:03d}'
-                for folder in ('CUSTOM', 'SIEM'):
-                    (staged / label / folder).mkdir(parents=True)
                 manifest.append({'label': label, 'source': str(package), 'vendor_rules': len(vendor)})
                 for cid, (custom_path, rule) in ours.items():
                     uid = upstream_id(cid, custom_prefix)
@@ -145,13 +156,10 @@ def direct_compare(custom, sources, output, *, custom_prefix):
                     result = compare_pair(rule, counterpart, custom_prefix=custom_prefix)
                     result.update(package=str(package), package_label=package.name,
                                   snapshot=label, custom_source=str(custom_path.resolve()))
-                    for folder, data in [('CUSTOM', rule), ('SIEM', counterpart)]:
-                        if data is not None:
-                            (staged / label / folder / f'{data["id"]}.ro').write_text(dump(data), encoding='utf-8')
                     results.append(result)
         (staged / 'report.md').write_text(markdown(results), encoding='utf-8')
         for name, data in [('results', results), ('packages', manifest)]:
             (staged / f'{name}.json').write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        destination = output / f"{datetime.now()}_{uuid.uuid4().hex}"
+        destination = output / f"{datetime.now().date()}_{uuid.uuid4().hex}"
         staged.rename(destination)
     return destination, results

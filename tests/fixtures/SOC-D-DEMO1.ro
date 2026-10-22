@@ -24,10 +24,10 @@ select:
         a: .id
         b: .id
 on_correlate: !vrl |
-  # начало моих изменений
+  ### start
   .groupedBy = ["example_custom_host"]
-  # конец моих изменений
-  .description = "Synthetic event"
+  ### end
+  .description = "Synthetic custom event"
 ttl: 20
 tests:
 - name: Synthetic event

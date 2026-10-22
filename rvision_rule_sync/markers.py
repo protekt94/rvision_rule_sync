@@ -1,10 +1,11 @@
 """Locate user annotations without removing or rewriting any source text."""
-START = '# начало моих изменений'
-END = '# конец моих изменений'
+START = '### start'
+END = '### end'
 
 
 def custom_regions(rule):
-    regions, warnings = [], []
+    regions = list(getattr(rule, 'yaml_regions', []))
+    warnings = list(getattr(rule, 'yaml_marker_warnings', []))
 
     def walk(value, path):
         if isinstance(value, dict):
